@@ -1,14 +1,26 @@
-# 选中即问 AI 助手应用构建脚本
+# TextSage AI 助手应用构建脚本
 
 .PHONY: all clean run app
 
+# 基础路径
+SRC_DIR = ../src
+BUILD_DIR = ../build
+
 # 编译命令
 SWIFT = swiftc
-APP_NAME = TextCraft
-APP_BUNDLE = $(APP_NAME).app
+APP_NAME = TextSage
+APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
 
 # 代理配置
 PROXY = export https_proxy=http://127.0.0.1:7890; export http_proxy=http://127.0.0.1:7890; export all_proxy=socks5://127.0.0.1:7890;
+
+# 源文件
+SOURCES = $(SRC_DIR)/App/main.swift \
+          $(SRC_DIR)/Services/TextExtractor.swift \
+          $(SRC_DIR)/Services/WindowManager.swift \
+          $(SRC_DIR)/Views/ChatView.swift \
+          $(SRC_DIR)/Views/SettingsView.swift \
+          $(SRC_DIR)/Views/ContentView.swift
 
 # Swift 编译标记
 SWIFT_FLAGS = -O -framework Cocoa -framework SwiftUI
@@ -17,19 +29,21 @@ SWIFT_FLAGS = -O -framework Cocoa -framework SwiftUI
 all: app
 
 # 编译可执行文件
-$(APP_NAME): main.swift TextExtractor.swift WindowManager.swift ChatView.swift SettingsView.swift
+$(BUILD_DIR)/$(APP_NAME): $(SOURCES)
 	@echo "📦 开始编译可执行文件 $(APP_NAME)..."
-	@$(PROXY) $(SWIFT) $(SWIFT_FLAGS) -o $(APP_NAME) main.swift TextExtractor.swift WindowManager.swift ChatView.swift SettingsView.swift
+	@mkdir -p $(BUILD_DIR)
+	@$(PROXY) $(SWIFT) $(SWIFT_FLAGS) -o $(BUILD_DIR)/$(APP_NAME) $(SOURCES)
 	@echo "✅ 可执行文件编译完成"
 
 # 创建 .app 包
-app: $(APP_NAME)
+app: $(BUILD_DIR)/$(APP_NAME)
 	@echo "🏗️ 创建应用程序包 $(APP_BUNDLE)..."
 	@rm -rf $(APP_BUNDLE) # 清理旧包
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
 	@mkdir -p $(APP_BUNDLE)/Contents/Resources
-	@cp $(APP_NAME) $(APP_BUNDLE)/Contents/MacOS/ # 复制可执行文件
-	@cp Info.plist $(APP_BUNDLE)/Contents/ # 复制 Info.plist
+	@cp -r ../resources/Assets.xcassets $(APP_BUNDLE)/Contents/Resources/ # 复制资源文件
+	@cp $(BUILD_DIR)/$(APP_NAME) $(APP_BUNDLE)/Contents/MacOS/ # 复制可执行文件
+	@cp $(SRC_DIR)/App/Info.plist $(APP_BUNDLE)/Contents/ # 复制 Info.plist
 	@echo "✅ 应用程序包创建完成: $(APP_BUNDLE)"
 
 # 运行 .app 包
@@ -40,6 +54,6 @@ run: app
 # 清理
 clean:
 	@echo "🧹 清理编译文件和应用包..."
-	@rm -f $(APP_NAME)
+	@rm -f $(BUILD_DIR)/$(APP_NAME)
 	@rm -rf $(APP_BUNDLE)
 	@echo "清理完成" 
