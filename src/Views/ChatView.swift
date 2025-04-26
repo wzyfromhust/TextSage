@@ -749,314 +749,453 @@ struct AppColors {
 
 // 聊天视图
 struct ChatView: View {
+    // 使用共享的单例
     @ObservedObject var conversationManager = ConversationManager.shared
     @State private var newMessage: String = ""
-    @State private var selectedText: String = AppState.shared.selectedText
-    @State private var showingSelectedText: Bool = false
     @State private var isProcessing: Bool = false
+    @State private var selectedText: String = ""
+    @State private var showingSelectedText: Bool = false
     @State private var showingSidebar: Bool = false
-    @State private var showSettings: Bool = false
     @State private var sidebarOffset: CGFloat = -300
     
-    // 添加新的状态指示器相关状态
-    @State private var showStatusToast: Bool = false
-    @State private var statusMessage: String = ""
-    @State private var statusType: StatusType = .info
+    // 流式输出相关
+    @State private var streamedResponse: String = ""
+    @State private var isStreamingResponse: Bool = false
     
-    // 状态类型枚举
-    enum StatusType {
-        case success
-        case error
-        case info
-        case warning
-        
-        var color: Color {
-            switch self {
-            case .success: return Color.green
-            case .error: return Color.red
-            case .info: return Color.blue
-            case .warning: return Color.orange
-            }
-        }
-        
-        var icon: String {
-            switch self {
-            case .success: return "checkmark.circle.fill"
-            case .error: return "exclamationmark.circle.fill"
-            case .info: return "info.circle.fill"
-            case .warning: return "exclamationmark.triangle.fill"
-            }
-        }
-    }
+    // 弹窗相关状态
+    @State private var showFullTextAlert: Bool = false
+    @State private var fullTextToShow: String = ""
     
     // 环境变量获取色彩方案
     @Environment(\.colorScheme) var colorScheme
-    @AppStorage("fontSize") private var fontSize: Double = 14
+    
+    // 从 AppStorage 获取用户设置
+    @AppStorage("fontSize") private var fontSize: Double = 14.0
+    @AppStorage("maxHistoryItems") private var maxHistoryItems: Int = 50
+    @AppStorage("sidebarWidth") private var sidebarWidth: Double = 280.0
+    @AppStorage("useStreamOutput") private var useStreamOutput: Bool = true
+    
+    // 背景颜色
+    private var backgroundColor: Color {
+        colorScheme == .dark ? AppColors.bgDark : AppColors.bgLight
+    }
     
     var body: some View {
         ZStack {
-            // 主界面
-            VStack(spacing: 0) {
-                // 顶部栏
-                HStack {
-                    // 侧边栏按钮
-                    Button(action: {
-                        if showingSidebar {
-                            closeSidebar()
-                        } else {
-                            openSidebar()
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "line.3.horizontal")
-                                .foregroundColor(AppColors.primary)
-                            Text(conversationManager.currentConversation?.title ?? "新对话")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                                .lineLimit(1)
-                        }
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.primary.opacity(0.05))
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    
-                    Spacer()
-                    
-                    // 设置按钮
-                    Button(action: {
-                        showSettings.toggle()
-                    }) {
-                        Image(systemName: "gear")
-                            .font(.system(size: 18))
-                            .foregroundColor(.gray)
-                            .padding(6)
-                            .background(Circle().fill(Color.gray.opacity(0.1)))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 12)
-                .background(
-                    Rectangle()
-                        .fill(colorScheme == .dark ? Color.black.opacity(0.2) : Color.white)
-                        .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
-                )
-                
-                // 聊天界面
-                ZStack {
-                    // 聊天消息
-                    VStack(spacing: 0) {
-                        ScrollViewReader { scrollView in
-                            ScrollView {
-                                // 如果有选中的文本，显示在顶部
-                                if !selectedText.isEmpty && showingSelectedText {
-                                    SelectedTextView(text: selectedText, showingSelectedText: $showingSelectedText)
-                                        .transition(.move(edge: .top).combined(with: .opacity))
-                                        .padding(.top, 12)
-                                }
-                                
-                                if let conversation = conversationManager.currentConversation {
-                                    LazyVStack(spacing: 16) {
-                                        ForEach(conversation.messages) { message in
-                                            MessageBubble(
-                                                message: message,
-                                                isLastMessage: message.id == conversation.messages.last?.id
-                                            )
-                                                .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.9)), removal: .opacity))
-                                                .id(message.id) // 确保ID正确设置
-                                        }
-                                    }
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 12)
-                                    .animation(.spring(), value: conversation.messages.count)
-                                } else {
-                                    // 如果没有当前对话显示空状态
-                                    VStack(spacing: 20) {
-                                        Image(systemName: "bubble.left.and.bubble.right")
-                                            .font(.system(size: 60))
-                                            .foregroundColor(.gray.opacity(0.3))
-                                        
-                                        Text("开始新的对话")
-                                            .font(.title3)
-                                            .foregroundColor(.gray)
-                                        
-                                        Button("新对话") {
-                                            _ = conversationManager.createNewConversation()
-                                        }
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 8)
-                                        .background(AppColors.primary)
-                                        .foregroundColor(.white)
-                                        .cornerRadius(20)
-                                    }
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    .padding()
-                                }
-                            }
-                            .onChange(of: conversationManager.currentConversation?.messages.count) { oldValue, newValue in
-                                DispatchQueue.main.async {
-                                    if let conversation = conversationManager.currentConversation,
-                                       let lastMessage = conversation.messages.last {
-                                        withAnimation {
-                                            scrollView.scrollTo(lastMessage.id, anchor: .bottom)
-                                        }
-                                    }
-                                }
-                            }
-                            .background(colorScheme == .dark ? Color.black.opacity(0.1) : Color(NSColor.textBackgroundColor))
-                        }
-                    }
-                    
-                    // 底部输入框
-                    VStack {
-                        Spacer()
-                        // 使用新的ChatInputBox组件
-                        ChatInputBox(
-                            text: $newMessage, 
-                            isProcessing: $isProcessing,
-                            onSend: sendMessage
-                        )
-                    }
-                }
-            }
-            
-            // 侧边栏
+            // 主聊天区域
             GeometryReader { geometry in
-                HStack(spacing: 0) {
-                    // 侧边栏内容
-                    VStack(spacing: 0) {
-                        // 侧边栏标题
-                        HStack {
-                            Text("对话历史")
-                                .font(.headline)
-                                .padding()
-                            
-                            Spacer()
-                            
-                            Button(action: {
-                                closeSidebar()
-                            }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(.gray)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .padding(.horizontal)
-                        }
-                        .background(Color(NSColor.controlBackgroundColor))
-                        
-                        // 对话列表
-                        SidebarConversationsList(
-                            conversations: conversationManager.conversations,
-                            currentID: conversationManager.currentConversationID,
-                            onSelect: { id in
-                                conversationManager.switchToConversation(id: id)
-                                closeSidebar()
-                            },
-                            onDelete: { id in
-                                conversationManager.deleteConversation(id: id)
-                            }
-                        )
-                        
-                        Divider()
-                        
-                        // 底部按钮区域
-                        HStack {
-                            Button(action: {
-                                _ = conversationManager.createNewConversation()
-                                closeSidebar()
-                            }) {
-                                HStack {
-                                    Image(systemName: "plus.circle.fill")
-                                    Text("新对话")
-                                }
-                                .font(.system(size: 14))
-                                .foregroundColor(AppColors.primary)
-                                .padding(.vertical, 8)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            
-                            Spacer()
-                            
-                            Button(action: {
-                                showSettings.toggle()
-                                closeSidebar()
-                            }) {
-                                HStack {
-                                    Image(systemName: "gear")
-                                    Text("设置")
-                                }
-                                .font(.system(size: 14))
-                                .foregroundColor(.gray)
-                                .padding(.vertical, 8)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                        .background(Color(NSColor.controlBackgroundColor))
-                    }
-                    .frame(width: 300)
-                    .background(Color(NSColor.windowBackgroundColor))
-                    .offset(x: sidebarOffset)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: sidebarOffset)
-                    
-                    Spacer()
-                }
-                
-                // 添加背景覆盖层，点击关闭侧边栏
-                if showingSidebar {
-                    Color.black.opacity(0.2)
-                        .edgesIgnoringSafeArea(.all)
-                        .onTapGesture {
-                            closeSidebar()
-                        }
-                        .transition(.opacity)
-                }
+                chatArea(geometry: geometry)
             }
-            .zIndex(1)
             
-            // 添加新的状态指示器
-            StatusToast(isVisible: $showStatusToast, message: statusMessage, type: statusType)
+            // 半透明背景遮罩 - 当侧边栏显示时
+            if showingSidebar {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .opacity(showingSidebar ? 1 : 0)
+                    .animation(.easeOut(duration: 0.2), value: showingSidebar)
+                    .onTapGesture {
+                        closeSidebar()
+                    }
+            }
+            
+            // 侧边栏 - 浮动面板
+            GeometryReader { geometry in
+                sidebarView(geometry: geometry)
+                    .frame(width: min(sidebarWidth, geometry.size.width * 0.85))
+                    .background(backgroundColor)
+                    .cornerRadius(12, corners: [.topRight, .bottomRight])
+                    .shadow(color: AppColors.shadow, radius: 10, x: 5, y: 0)
+                    .offset(x: showingSidebar ? 0 : -sidebarWidth)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showingSidebar)
+                    .edgesIgnoringSafeArea(.vertical)
+                    .zIndex(1)
+            }
         }
         .onAppear {
-            // 如果没有当前会话，创建一个新的
-            if conversationManager.currentConversationID == nil {
-                _ = conversationManager.createNewConversation()
-            }
+            // 从全局状态获取选中文本
+            updateSelectedTextFromAppState()
             
-            // 订阅选中文本变化通知
+            // 注册选中文本变化的通知
             NotificationCenter.default.addObserver(
                 forName: .selectedTextDidChange,
                 object: nil,
                 queue: .main
-            ) { [self] notification in
-                if let text = notification.userInfo?["text"] as? String, !text.isEmpty {
-                    selectedText = text
-                    showingSelectedText = true
+            ) { notification in
+                if let text = notification.userInfo?["text"] as? String {
+                    updateSelectedText(text)
                 }
             }
+            
+            // 更新历史记录限制
+            conversationManager.historyLimit = maxHistoryItems
+            
+            // 如果有选中文本，自动展开文本区域
+            if !selectedText.isEmpty {
+                showingSelectedText = true
+                
+                // 如果这是一个新会话，先创建欢迎消息
+                if conversationManager.currentConversation?.messages.isEmpty ?? true {
+                    // 使用短暂延迟后添加欢迎消息，以便UI先加载完成
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        let welcomeMessage = Message(
+                            content: "你好！我是你的AI助手。我看到你选择了一段文本，有什么问题想问我吗？",
+                            isUser: false
+                        )
+                        conversationManager.addMessage(welcomeMessage)
+                    }
+                }
+            }
+            
+            // 确保useStreamOutput设置正确保存
+            UserDefaults.standard.set(useStreamOutput, forKey: "useStreamOutput")
+            
+            print("当前流式输出设置: \(useStreamOutput ? "开启" : "关闭")")
         }
         .onDisappear {
-            // 移除通知监听
+            // 移除通知观察者
             NotificationCenter.default.removeObserver(self, name: .selectedTextDidChange, object: nil)
         }
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
+        // 完整文本查看弹窗
+        .alert(isPresented: $showFullTextAlert) {
+            Alert(
+                title: Text("选中的文本"),
+                message: Text(fullTextToShow),
+                dismissButton: .default(Text("确定"))
+            )
+        }
+    }
+    
+    // 从AppState获取选中文本
+    private func updateSelectedTextFromAppState() {
+        let text = AppState.shared.selectedText
+        updateSelectedText(text)
+    }
+    
+    // 更新选中文本并处理相关状态
+    private func updateSelectedText(_ text: String) {
+        // 只有当文本实际变化时才更新，以避免不必要的UI刷新
+        if self.selectedText != text {
+            self.selectedText = text
+            
+            // 当文本为空时，直接隐藏
+            if text.isEmpty {
+                self.showingSelectedText = false
+            } else {
+                // 当有文本时，显示
+                self.showingSelectedText = true
+            }
+            
+            print("📝 ChatView: 选中文本已更新 [\(text.count) 字符]")
+        } else if text.isEmpty && self.showingSelectedText {
+            // 确保当文本为空时始终隐藏
+            self.showingSelectedText = false
         }
     }
     
     private func openSidebar() {
-        sidebarOffset = 0
-        showingSidebar = true
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            showingSidebar = true
+        }
     }
     
     private func closeSidebar() {
-        sidebarOffset = -300
-        showingSidebar = false
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            showingSidebar = false
+        }
+    }
+    
+    // 侧边栏视图
+    @ViewBuilder
+    private func sidebarView(geometry: GeometryProxy) -> some View {
+        VStack(spacing: 0) {
+            // 边栏头部 - 标题和关闭按钮
+            HStack {
+                Text("对话列表")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Button(action: closeSidebar) {
+                    Image(systemName: "xmark")
+                        .foregroundColor(.gray)
+                        .font(.system(size: 14, weight: .medium))
+                        .padding(6)
+                        .background(Circle().fill(Color.gray.opacity(0.1)))
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+            .background(
+                Rectangle()
+                    .fill(backgroundColor)
+                    .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
+            )
+            
+            // 新对话按钮
+            Button(action: {
+                _ = conversationManager.createNewConversation()
+                closeSidebar()
+            }) {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundColor(AppColors.primary)
+                    Text("新对话")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.primary.opacity(0.05))
+                )
+                .padding(.horizontal)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // 对话列表
+            SidebarConversationsList(
+                conversations: conversationManager.conversations,
+                currentID: conversationManager.currentConversationID,
+                onSelect: { id in
+                    conversationManager.switchToConversation(id: id)
+                    if geometry.size.width < 600 {
+                        closeSidebar()
+                    }
+                },
+                onDelete: { id in
+                    conversationManager.deleteConversation(id: id)
+                }
+            )
+        }
+    }
+    
+    // 聊天区域视图
+    @ViewBuilder
+    private func chatArea(geometry: GeometryProxy) -> some View {
+        VStack(spacing: 0) {
+            // 顶部栏
+            HStack {
+                // 侧边栏按钮
+                Button(action: {
+                    if showingSidebar {
+                        closeSidebar()
+                    } else {
+                        openSidebar()
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundColor(AppColors.primary)
+                        Text(conversationManager.currentConversation?.title ?? "新对话")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .lineLimit(1)
+                    }
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.primary.opacity(0.05))
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+            .background(
+                Rectangle()
+                    .fill(colorScheme == .dark ? Color.black.opacity(0.2) : Color.white)
+                    .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
+            )
+            
+            // 消息列表
+            ScrollViewReader { scrollView in
+                ScrollView {
+                    if let conversation = conversationManager.currentConversation {
+                        LazyVStack(spacing: 16) {
+                            ForEach(conversation.messages) { message in
+                                MessageBubble(message: message)
+                                    .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.9)), removal: .opacity))
+                                    .id(message.id) // 确保ID正确设置
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 12)
+                        .animation(.spring(), value: conversation.messages.count)
+                    } else {
+                        // 如果没有当前对话显示空状态
+                        VStack(spacing: 20) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.system(size: 60))
+                                .foregroundColor(.gray.opacity(0.3))
+                            
+                            Text("开始新的对话")
+                                .font(.title3)
+                                .foregroundColor(.gray)
+                            
+                            Button("新对话") {
+                                _ = conversationManager.createNewConversation()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(AppColors.primary)
+                            .foregroundColor(.white)
+                            .cornerRadius(20)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding()
+                    }
+                }
+                .onChange(of: conversationManager.currentConversation?.messages.count) { oldValue, newValue in
+                    DispatchQueue.main.async {
+                        if let conversation = conversationManager.currentConversation,
+                           let lastMessage = conversation.messages.last {
+                            withAnimation {
+                                scrollView.scrollTo(lastMessage.id, anchor: .bottom)
+                            }
+                        }
+                    }
+                }
+                .background(colorScheme == .dark ? Color.black.opacity(0.1) : Color(NSColor.textBackgroundColor))
+            }
+            
+            // 输入区域 - 包含上下文和输入框
+            VStack(spacing: 12) {
+                // 选中的文本直接显示（无需点击）
+                if !selectedText.isEmpty && showingSelectedText {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .center, spacing: 4) {
+                            Image(systemName: "text.quote")
+                                .font(.caption)
+                                .foregroundColor(AppColors.primary)
+                            
+                            Text("已选中的文本")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fontWeight(.medium)
+                            
+                            Spacer()
+                            
+                            // 添加关闭按钮
+                            Button(action: {
+                                showingSelectedText = false
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.gray)
+                                    .font(.system(size: 14))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                        
+                        Text(selectedText.count > 100 ? String(selectedText.prefix(100)) + "..." : selectedText)
+                            .font(.callout)
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(colorScheme == .dark ? Color.black.opacity(0.2) : Color.gray.opacity(0.05))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.gray.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal)
+                    .onTapGesture {
+                        // 恢复点击显示完整文本功能
+                        fullTextToShow = selectedText
+                        showFullTextAlert = true
+                    }
+                }
+                
+                // 输入框部分
+                HStack(spacing: 12) {
+                    ZStack(alignment: .leading) {
+                        if newMessage.isEmpty {
+                            Text(!selectedText.isEmpty ? "对选中的文本提问..." : "请输入消息...")
+                                .foregroundColor(.gray.opacity(0.8))
+                                .padding(.leading, 16)
+                                .padding(.vertical, 8)
+                        }
+                        
+                        HStack {
+                            TextField("", text: $newMessage)
+                                .disabled(isProcessing)
+                                .font(.system(size: CGFloat(fontSize)))
+                                .textFieldStyle(PlainTextFieldStyle())
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                            
+                            Spacer()
+                            
+                            // 发送按钮
+                            if !newMessage.isEmpty {
+                                Button(action: sendMessage) {
+                                    Image(systemName: "arrow.up.circle.fill")
+                                        .font(.system(size: 24))
+                                        .foregroundColor(AppColors.primary)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .disabled(isProcessing)
+                                .padding(.trailing, 12)
+                                .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                    }
+                    .frame(height: 40)
+                    .background(
+                        Capsule()
+                            .fill(colorScheme == .dark ? Color.black.opacity(0.3) : Color.gray.opacity(0.05))
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(Color.gray.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                    
+                    // 悬浮发送按钮 - 只有在输入为空或处理中时显示
+                    if newMessage.isEmpty {
+                        Button(action: sendMessage) {
+                            ZStack {
+                                Circle()
+                                    .fill(isProcessing ? Color.gray.opacity(0.3) : AppColors.primary)
+                                    .frame(width: 40, height: 40)
+                                
+                                if isProcessing {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.8)
+                                } else {
+                                    // 将麦克风图标改为发送图标
+                                    Image(systemName: "arrow.up")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(isProcessing || (selectedText.isEmpty && newMessage.isEmpty))
+                        .animation(.spring(), value: isProcessing)
+                        .shadow(color: AppColors.shadow, radius: 2, x: 0, y: 1)
+                    }
+                }
+                .padding(.horizontal)
+            }
+            .padding(.vertical, 12)
+            .background(
+                Rectangle()
+                    .fill(colorScheme == .dark ? Color.black.opacity(0.2) : Color.white)
+                    .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: -1)
+            )
+        }
     }
     
     // MARK: - 发送消息
@@ -1107,12 +1246,6 @@ struct ChatView: View {
         let aiMessage = Message(content: aiResponseContent, isUser: false, status: .loading)
         conversationManager.addMessage(aiMessage)
         
-        // 显示状态信息
-        showStatusInfo(
-            "正在发送请求...",
-            type: .info
-        )
-        
         if AIService.shared.useStreamingOutput {
             // 使用流式API
             AIService.shared.sendChatRequestStream(messages: messagesForAPI, onChunk: { chunk in
@@ -1136,9 +1269,6 @@ struct ChatView: View {
                         conversationManager.conversations[0].messages[index].content = "获取AI回复失败: \(error.localizedDescription)"
                         conversationManager.conversations[0].messages[index].status = .error
                     }
-                    
-                    // 显示错误信息
-                    showStatusInfo("获取AI回复失败: \(error.localizedDescription)", type: .error)
                 }
                 
                 isProcessing = false
@@ -1161,26 +1291,9 @@ struct ChatView: View {
                         conversationManager.conversations[0].messages[index].content = "获取AI回复失败: \(error.localizedDescription)"
                         conversationManager.conversations[0].messages[index].status = .error
                     }
-                    
-                    // 显示错误信息
-                    showStatusInfo("获取AI回复失败: \(error.localizedDescription)", type: .error)
                 }
                 
                 isProcessing = false
-            }
-        }
-    }
-    
-    // 新增：显示状态信息的辅助函数
-    private func showStatusInfo(_ message: String, type: StatusType) {
-        statusMessage = message
-        statusType = type
-        showStatusToast = true
-        
-        // 3秒后自动隐藏
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            withAnimation {
-                showStatusToast = false
             }
         }
     }
@@ -1400,107 +1513,78 @@ struct ConversationRow: View {
 // 消息气泡组件
 struct MessageBubble: View {
     let message: Message
-    let isLastMessage: Bool
     @Environment(\.colorScheme) var colorScheme
-    @State private var showCopyConfirmation: Bool = false
+    @State private var isHovering: Bool = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top) {
-                // 头像
-                Avatar(isUser: message.isUser)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    // 消息内容
-                    VStack(alignment: .leading, spacing: 4) {
-                        // 消息加载状态
-                        if message.status == .loading {
-                            TypingIndicator()
-                                .padding(.top, 8)
-                                .padding(.bottom, 4)
-                        } else if message.status == .streaming {
-                            Text(message.content)
-                                .textSelection(.enabled)
-                                .font(.system(size: 15))
-                                .foregroundColor(message.isUser ? .white : .primary)
-                                .padding([.horizontal, .vertical], 12)
-                                .lineSpacing(5)
-                            
-                            TypingIndicator()
-                                .padding(.top, -4)
-                                .padding(.bottom, 8)
-                                .padding(.leading, 8)
-                        } else {
-                            Text(message.content)
-                                .textSelection(.enabled)
-                                .font(.system(size: 15))
-                                .foregroundColor(message.isUser ? .white : .primary)
-                                .padding([.horizontal, .vertical], 12)
-                                .lineSpacing(5)
-                        }
-                    }
-                    .background(
-                        message.isUser ? 
-                            AppColors.primary.cornerRadius(16, corners: [.topLeft, .topRight, .bottomLeft]) :
-                            (colorScheme == .dark ? Color.secondary.opacity(0.2) : Color.gray.opacity(0.1))
-                                .cornerRadius(16, corners: [.topRight, .bottomLeft, .bottomRight])
-                    )
+        HStack(alignment: .bottom, spacing: 8) {
+            if message.isUser {
+                Spacer()
+            } else {
+                // AI头像
+                Avatar(isUser: false)
+            }
+            
+            VStack(alignment: message.isUser ? .trailing : .leading, spacing: 4) {
+                ZStack(alignment: .topTrailing) {
+                    Text(message.content)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            message.isUser ? 
+                                AppColors.userBubble :
+                                (colorScheme == .dark ? Color.gray.opacity(0.3) : AppColors.aiBubble)
+                        )
+                        .foregroundColor(message.isUser ? .white : .primary)
+                        .cornerRadius(20)
+                        .cornerRadius(message.isUser ? 20 : 4, corners: message.isUser ? [.topLeft, .bottomLeft, .bottomRight] : [.topRight, .bottomLeft, .bottomRight])
                     
-                    // 时间戳 
-                    Text(formattedTime(from: message.timestamp))
-                        .font(.system(size: 11))
-                        .foregroundColor(.gray)
-                        .padding(.leading, 4)
-                        .padding(.top, 2)
-                }
-                
-                // 消息操作按钮
-                if message.status != .loading && message.status != .streaming {
-                    HStack(spacing: 8) {
+                    // 只有在非用户消息上显示复制按钮
+                    if !message.isUser && isHovering {
                         Button(action: {
-                            copyMessageToClipboard(message.content)
-                            showCopyConfirmation = true
-                            
-                            // 2秒后隐藏确认提示
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                withAnimation {
-                                    showCopyConfirmation = false
-                                }
-                            }
+                            copyToClipboard(message.content)
                         }) {
                             Image(systemName: "doc.on.doc")
-                                .font(.system(size: 14))
-                                .foregroundColor(message.isUser ? .white.opacity(0.7) : .gray)
+                                .font(.system(size: 12))
                                 .padding(6)
-                                .background(
-                                    Circle()
-                                        .fill(message.isUser ? Color.white.opacity(0.15) : Color.gray.opacity(0.1))
-                                )
+                                .background(Circle().fill(Color.white.opacity(0.9)))
+                                .foregroundColor(AppColors.primary)
+                                .shadow(color: Color.black.opacity(0.1), radius: 1)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .opacity(showCopyConfirmation ? 0 : 1)
-                        .overlay(
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(message.isUser ? .white : .green)
-                                .opacity(showCopyConfirmation ? 1 : 0)
-                        )
+                        .offset(x: 8, y: -8)
+                        .transition(.opacity)
                     }
-                    .padding(.leading, 4)
-                    .opacity(0.8)
                 }
+                
+                Text(formatTime(message.timestamp))
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .padding(.horizontal, 4)
+            }
+            
+            if !message.isUser {
+                Spacer()
+            } else {
+                // 用户头像
+                Avatar(isUser: true)
             }
         }
-        .padding(.bottom, isLastMessage ? 0 : 16)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isHovering = hovering
+            }
+        }
     }
     
-    private func formattedTime(from date: Date) -> String {
+    func formatTime(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
     
-    private func copyMessageToClipboard(_ text: String) {
+    // 复制到剪贴板功能
+    func copyToClipboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
@@ -1602,308 +1686,9 @@ extension View {
     }
 }
 
-// 添加状态指示器组件
-struct StatusToast: View {
-    @Binding var isVisible: Bool
-    var message: String
-    var type: ChatView.StatusType
-    
-    var body: some View {
-        if isVisible {
-            VStack {
-                Spacer()
-                HStack(spacing: 12) {
-                    Image(systemName: type.icon)
-                        .foregroundColor(.white)
-                    
-                    Text(message)
-                        .foregroundColor(.white)
-                        .font(.system(size: 14, weight: .medium))
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        withAnimation {
-                            isVisible = false
-                        }
-                    }) {
-                        Image(systemName: "xmark")
-                            .foregroundColor(.white.opacity(0.7))
-                            .font(.system(size: 12))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(type.color)
-                        .opacity(0.9)
-                )
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 2)
-            }
-            .zIndex(100)
-            .animation(.easeInOut(duration: 0.3), value: isVisible)
-        }
-    }
-}
-
 // 预览
 struct ChatView_Previews: PreviewProvider {
     static var previews: some View {
         ChatView()
-    }
-}
-
-// 更新ChatView中的输入框，添加历史记录浏览功能
-struct ChatInputBox: View {
-    @Binding var text: String
-    @Binding var isProcessing: Bool
-    var onSend: () -> Void
-    @ObservedObject var conversationManager = ConversationManager.shared
-    
-    // 添加历史记录状态
-    @State private var messageHistory: [String] = []
-    @State private var historyIndex: Int = -1
-    @State private var tempMessage: String = ""
-    
-    // 获取聚焦状态
-    @FocusState private var isFocused: Bool
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .bottom, spacing: 10) {
-                // 文本输入框
-                ZStack(alignment: .bottomLeading) {
-                    // 背景和边框
-                    RoundedRectangle(cornerRadius: 24)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        .background(RoundedRectangle(cornerRadius: 24).fill(Color.gray.opacity(0.05)))
-                    
-                    // 文本输入
-                    TextEditor(text: $text)
-                        .focused($isFocused)
-                        .scrollContentBackground(.hidden)
-                        .background(Color.clear)
-                        .font(.system(size: 15))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .frame(minHeight: 40, maxHeight: 120)
-                        .onSubmit {
-                            if !isProcessing && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                onSend()
-                                updateMessageHistory(text)
-                            }
-                        }
-                        .onChange(of: text) { newValue in
-                            // 当通过键盘输入(而不是历史选择)更新文本时重置历史索引
-                            if newValue != tempMessage && historyIndex != -1 {
-                                historyIndex = -1
-                            }
-                        }
-                        .onAppear {
-                            // 视图出现时加载历史记录
-                            loadMessageHistory()
-                        }
-                        // 处理键盘事件
-                        .onKeyPress(.upArrow) {
-                            navigateHistory(direction: .up)
-                            return .handled
-                        }
-                        .onKeyPress(.downArrow) {
-                            navigateHistory(direction: .down)
-                            return .handled
-                        }
-                    
-                    // 占位符文字
-                    if text.isEmpty {
-                        Text("输入消息...")
-                            .font(.system(size: 15))
-                            .foregroundColor(.gray.opacity(0.6))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .frame(height: min(max(40, estimateTextHeight(text) + 16), 120))
-                
-                // 发送按钮
-                Button(action: {
-                    if !isProcessing && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        onSend()
-                        updateMessageHistory(text)
-                    }
-                }) {
-                    Image(systemName: isProcessing ? "stop.circle.fill" : "arrow.up.circle.fill")
-                        .resizable()
-                        .frame(width: 32, height: 32)
-                        .foregroundColor(AppColors.primary)
-                }
-                .disabled(isProcessing && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-        }
-        .background(
-            Rectangle()
-                .fill(Color(NSColor.windowBackgroundColor))
-                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: -1)
-        )
-    }
-    
-    // 导航方向枚举
-    enum NavigationDirection {
-        case up, down
-    }
-    
-    // 浏览历史记录
-    private func navigateHistory(direction: NavigationDirection) {
-        guard !messageHistory.isEmpty else { return }
-        
-        // 如果当前是首次使用向上键，保存当前输入
-        if direction == .up && historyIndex == -1 {
-            tempMessage = text
-        }
-        
-        switch direction {
-        case .up:
-            if historyIndex < messageHistory.count - 1 {
-                historyIndex += 1
-                text = messageHistory[historyIndex]
-            }
-        case .down:
-            if historyIndex > 0 {
-                historyIndex -= 1
-                text = messageHistory[historyIndex]
-            } else if historyIndex == 0 {
-                // 恢复到临时保存的消息
-                historyIndex = -1
-                text = tempMessage
-            }
-        }
-    }
-    
-    // 更新消息历史记录
-    private func updateMessageHistory(_ message: String) {
-        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedMessage.isEmpty {
-            // 避免添加重复的消息
-            if messageHistory.first != trimmedMessage {
-                // 将新消息添加到历史记录的开头
-                messageHistory.insert(trimmedMessage, at: 0)
-                
-                // 限制历史记录长度
-                if messageHistory.count > 50 {
-                    messageHistory = Array(messageHistory.prefix(50))
-                }
-                
-                // 保存到UserDefaults
-                saveMessageHistory()
-            }
-            
-            // 重置索引
-            historyIndex = -1
-            tempMessage = ""
-        }
-    }
-    
-    // 保存历史记录到UserDefaults
-    private func saveMessageHistory() {
-        UserDefaults.standard.set(messageHistory, forKey: "messageInputHistory")
-    }
-    
-    // 加载历史记录
-    private func loadMessageHistory() {
-        if let history = UserDefaults.standard.stringArray(forKey: "messageInputHistory") {
-            messageHistory = history
-        }
-    }
-    
-    // 估算文本高度
-    private func estimateTextHeight(_ text: String) -> CGFloat {
-        let screenWidth = NSScreen.main?.frame.width ?? 1200
-        let width = screenWidth - 90
-        let font = NSFont.systemFont(ofSize: 15)
-        let attributes = [NSAttributedString.Key.font: font]
-        let size = (text as NSString).boundingRect(
-            with: CGSize(width: width, height: .greatestFiniteMagnitude),
-            options: .usesLineFragmentOrigin,
-            attributes: attributes,
-            context: nil
-        ).size
-        return size.height
-    }
-}
-
-// 添加缺少的TypingIndicator组件
-struct TypingIndicator: View {
-    @State private var dotCount = 0
-    let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
-    
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(i < dotCount ? Color.gray : Color.gray.opacity(0.3))
-                    .frame(width: 6, height: 6)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .onReceive(timer) { _ in
-            dotCount = (dotCount + 1) % 4
-        }
-    }
-}
-
-// 修复SelectedTextView中的错误
-struct SelectedTextView: View {
-    let text: String
-    @Binding var showingSelectedText: Bool
-    @Environment(\.colorScheme) var colorScheme
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("已选择的文本")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                Button(action: {
-                    withAnimation {
-                        showingSelectedText = false
-                    }
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.gray)
-                        .font(.system(size: 16))
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.bottom, 4)
-            
-            ScrollView {
-                Text(text)
-                    .font(.system(size: 14))
-                    .foregroundColor(.primary)
-                    .lineSpacing(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // 删除点击显示全文功能，因为我们已经移除了相关状态
-            }
-            .frame(maxHeight: 120)
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(colorScheme == .dark ? Color.gray.opacity(0.2) : Color.gray.opacity(0.1))
-        )
-        .padding(.horizontal)
-        .padding(.bottom, 8)
     }
 } 

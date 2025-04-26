@@ -42,7 +42,7 @@ app: $(BUILD_DIR)/$(APP_NAME)
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
 	@mkdir -p $(APP_BUNDLE)/Contents/Resources
 	@cp -r ../resources/Assets.xcassets $(APP_BUNDLE)/Contents/Resources/ # 复制资源文件
-	@cp $(BUILD_DIR)/$(APP_NAME) $(APP_BUNDLE)/Contents/MacOS/ # 复制可执行文件
+	@cp $(BUILD_DIR)/$(APP_NAME) $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME) # 复制可执行文件并重命名
 	@cp $(SRC_DIR)/App/Info.plist $(APP_BUNDLE)/Contents/ # 复制 Info.plist
 	@echo "✅ 应用程序包创建完成: $(APP_BUNDLE)"
 
